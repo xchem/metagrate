@@ -12,6 +12,8 @@ app = Typer()
 
 from mlog import setup_logger
 
+DEBUG = False
+
 logger = setup_logger("metagrate")
 
 C_LONGCODE = "Long code"
@@ -28,11 +30,17 @@ SITE_TAG_TYPES = [
     "Quatassemblies",
 ]
 
+CURATOR_TAGS = None
+
 SITE_TAG_CACHE = {k: {} for k in SITE_TAG_TYPES}
 
 
 def load_csv(path):
-    df = pd.read_csv(path)
+
+    if path.name.endswith(".xlsx"):
+        df = pd.read_excel(path)
+    else:
+        df = pd.read_csv(path)
 
     if "Pose" not in df.columns:
         logger.warning(f"Old metadata format: {path}")
@@ -54,7 +62,15 @@ def match_row_to_source(row, source):
             longcode = longcode.replace(f"v{longcode[-1]}", longcode[-1])
         matching = source[source[C_LONGCODE].str.startswith(longcode)]
 
-    assert len(matching) == 1
+    match len(matching):
+        case 1:
+            ...
+        case 0:
+            logger.warning(f"No observations in source w/ \"{C_LONGCODE}\"=\"{longcode}\"")
+            return None
+            # raise ValueError(f"No observations in source w/ \"{C_LONGCODE}\"=\"{longcode}\"")
+        case _:
+            assert len(matching) == 1, f"Multiple observations in source w/ \"{C_LONGCODE}\"=\"{longcode}\""
 
     # get first match
     for i, row in matching.iterrows():
@@ -79,12 +95,17 @@ def get_curator_tags(row):
         if col.startswith("[") and col.split("]")[0][1:] in CURATOR_TAG_CATEGORIES:
             tags.append((col, row[col]))
 
+    global CURATOR_TAGS
+    CURATOR_TAGS = tags
+
     return tags
 
 
 def compare_site_tags(source, template):
 
     global SITE_TAG_CACHE
+
+    assert source['Long code'] == template['Long code']
 
     for site_type in SITE_TAG_TYPES:
 
@@ -107,9 +128,16 @@ def compare_site_tags(source, template):
                     )
                 ),
             )
-            logger.error(f"{col} inconsistency!")
+            logger.error(f"{col} inconsistency ({source['Long code']})")
+            raise ValueError(f"{col} inconsistency ({source['Long code']})!")
 
         elif cache_value is None:
+            if DEBUG:
+                logger.debug(f'Caching {site_type}["{template_value}"]="{source_value}"')
+
+            # if source_value == "Glu88":
+            #     raise ValueError
+
             cache[template_value] = source_value
 
 
@@ -184,7 +212,7 @@ def apply_generated_site_aliases(df):
             logger.var(f"Renamed {site_type} alias", f"{old} --> {new}")
 
 
-def migrate_tags(source, template):
+def migrate_tags(source, template, site_tags: bool = True):
 
     df = template.copy()
 
@@ -194,15 +222,22 @@ def migrate_tags(source, template):
 
         reference = match_row_to_source(row, source)
 
-        # check XCA tags
-        compare_site_tags(reference, row)
+        if reference is not None:
+            
+            # check XCA tags
+            if site_tags:
+                compare_site_tags(reference, row)
 
-        # curator tags:
-        tags = get_curator_tags(reference)
+            # curator tags:
+            tags = get_curator_tags(reference)
+        else:
+            tags = CURATOR_TAGS
+
         for col, value in tags:
             if col not in curator_tags:
                 curator_tags[col] = []
             curator_tags[col].append(value)
+            
 
     # apply curator tags
     for col, values in curator_tags.items():
@@ -229,7 +264,11 @@ def migrate(
     template: str,
     output: str = "metadata_migrated.csv",
     rename_sites: bool = True,
+    debug: bool = False,
 ):
+
+    global DEBUG
+    DEBUG = debug 
 
     output = Path(output).resolve()
     source = Path(source).resolve()
@@ -242,9 +281,10 @@ def migrate(
     df1 = load_csv(source)
     df2 = load_csv(template)
 
-    df3 = migrate_tags(df1, df2)
+    df3 = migrate_tags(df1, df2, site_tags=rename_sites)
 
-    apply_generated_site_aliases(df3)
+    if rename_sites:
+        apply_generated_site_aliases(df3)
 
     logger.writing(output)
     df3.to_csv(output, index=False)
