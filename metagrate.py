@@ -66,11 +66,13 @@ def match_row_to_source(row, source):
         case 1:
             ...
         case 0:
-            logger.warning(f"No observations in source w/ \"{C_LONGCODE}\"=\"{longcode}\"")
+            logger.warning(f'No observations in source w/ "{C_LONGCODE}"="{longcode}"')
             return None
             # raise ValueError(f"No observations in source w/ \"{C_LONGCODE}\"=\"{longcode}\"")
         case _:
-            assert len(matching) == 1, f"Multiple observations in source w/ \"{C_LONGCODE}\"=\"{longcode}\""
+            assert (
+                len(matching) == 1
+            ), f'Multiple observations in source w/ "{C_LONGCODE}"="{longcode}"'
 
     # get first match
     for i, row in matching.iterrows():
@@ -105,7 +107,7 @@ def compare_site_tags(source, template):
 
     global SITE_TAG_CACHE
 
-    assert source['Long code'] == template['Long code']
+    assert source["Long code"] == template["Long code"]
 
     for site_type in SITE_TAG_TYPES:
 
@@ -133,7 +135,9 @@ def compare_site_tags(source, template):
 
         elif cache_value is None:
             if DEBUG:
-                logger.debug(f'Caching {site_type}["{template_value}"]="{source_value}"')
+                logger.debug(
+                    f'Caching {site_type}["{template_value}"]="{source_value}"'
+                )
 
             # if source_value == "Glu88":
             #     raise ValueError
@@ -223,7 +227,7 @@ def migrate_tags(source, template, site_tags: bool = True):
         reference = match_row_to_source(row, source)
 
         if reference is not None:
-            
+
             # check XCA tags
             if site_tags:
                 compare_site_tags(reference, row)
@@ -237,7 +241,6 @@ def migrate_tags(source, template, site_tags: bool = True):
             if col not in curator_tags:
                 curator_tags[col] = []
             curator_tags[col].append(value)
-            
 
     # apply curator tags
     for col, values in curator_tags.items():
@@ -245,17 +248,6 @@ def migrate_tags(source, template, site_tags: bool = True):
         logger.var("Migrated curator tag", col)
 
     return df
-
-
-# def parse_args():
-
-#     parser = ArgumentParser(prog='metagrate', description='Metadata migrate: Copy tags from one Fragalysis metadata.csv to another one, matching observations using their longcodes but transferring other tags')
-
-#     parser.add_argument("source", help='metadata.csv from which you want to copy information')
-#     parser.add_argument("template", help='metadata.csv from a download of the Fragalysis instance you wish to modify')
-#     parser.add_argument("-o","--output", help='Name for the output file')
-
-# return parser.parse_args()
 
 
 @app.command()
@@ -268,7 +260,7 @@ def migrate(
 ):
 
     global DEBUG
-    DEBUG = debug 
+    DEBUG = debug
 
     output = Path(output).resolve()
     source = Path(source).resolve()
