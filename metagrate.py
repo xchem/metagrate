@@ -80,10 +80,20 @@ def match_row_to_source(row, source):
         break
 
     # checks
-    assert reference[C_COMPOUNDCODE] == row[C_COMPOUNDCODE], (
-        reference[C_COMPOUNDCODE],
-        row[C_COMPOUNDCODE],
-    )
+
+    if pd.isna(reference[C_COMPOUNDCODE]):
+        logger.warning(f"Null Compound code for {reference[C_SHORTCODE]} in SOURCE file")
+    
+    if pd.isna(row[C_COMPOUNDCODE]):
+        logger.warning(f"Null Compound code for {reference[C_SHORTCODE]} in TEMPLATE file")
+    
+    if pd.isna(reference[C_COMPOUNDCODE]) and pd.isna(row[C_COMPOUNDCODE]): 
+        pass
+    elif reference[C_COMPOUNDCODE] != row[C_COMPOUNDCODE]:
+        logger.var("Compound code in SOURCE", reference[C_COMPOUNDCODE])
+        logger.var("Compound code in TEMPLATE", row[C_COMPOUNDCODE])
+        raise ValueError(f"Compound codes in SOURCE do not match TEMPLATE for {reference[C_SHORTCODE]}")
+
     assert reference[C_SMILES] == row[C_SMILES], (reference[C_SMILES], row[C_SMILES])
 
     return reference
@@ -107,7 +117,7 @@ def compare_site_tags(source, template):
 
     global SITE_TAG_CACHE
 
-    assert source["Long code"] == template["Long code"]
+    assert source["Long code"] == template["Long code"], f'SOURCE Long code does not match TEMPLATE: {source["Long code"],template["Long code"]}. Try running with --no-rename-sites'
 
     for site_type in SITE_TAG_TYPES:
 
