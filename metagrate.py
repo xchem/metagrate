@@ -1,26 +1,20 @@
 #!/usr/bin/env python
 
+import mrich
 import pandas as pd
-from pathlib import Path
-
-# from argparse import ArgumentParser
-from fnmatch import fnmatch
 from typer import Typer
+from pathlib import Path
+from fnmatch import fnmatch
 
 app = Typer()
-# import mcol
-
-from mlog import setup_logger
 
 DEBUG = False
 
-logger = setup_logger("metagrate")
-
+# specify some fragalysis
 C_LONGCODE = "Long code"
 C_SHORTCODE = "Code"
 C_COMPOUNDCODE = "Compound code"
 C_SMILES = "Smiles"
-
 CURATOR_TAG_CATEGORIES = ["Other", "Forum", "Series"]
 SITE_TAG_TYPES = [
     "ConformerSites",
@@ -30,12 +24,16 @@ SITE_TAG_TYPES = [
     "Quatassemblies",
 ]
 
-CURATOR_TAGS = None
 
+# cache some tag info in a dictionary for self-consistency checks
+CURATOR_TAGS = None
 SITE_TAG_CACHE = {k: {} for k in SITE_TAG_TYPES}
 
+def load_csv(path: Path) -> pd.DataFrame:
+    """load a CSV/XLSX into a dataframe
 
-def load_csv(path):
+    :param path: `Path` to input file
+    """
 
     if path.name.endswith(".xlsx"):
         df = pd.read_excel(path)
@@ -43,66 +41,81 @@ def load_csv(path):
         df = pd.read_csv(path)
 
     if "Pose" not in df.columns:
-        logger.warning(f"Old metadata format: {path}")
+        mrich.warning(f"Old metadata format: {path}")
 
     return df
 
 
-def match_row_to_source(row, source):
+def match_row_to_source(template_row: pd.Series, source: pd.DataFrame) -> pd.Series:
+    """
+    :param template_row: `DataFrame` row in TEMPLATE to match to SOURCE
+    :param template_row: SOURCE `DataFrame` to search
+    :returns: `source` entry that matches `template_row`
+    """
 
-    longcode = row[C_LONGCODE]
+    template_longcode = template_row[C_LONGCODE]
 
-    # get by longcode
-    matching = source[source[C_LONGCODE] == longcode]
+    # get by exact longcode match
+    matching_rows = source[source[C_LONGCODE] == template_longcode]
 
-    # old format of longcode
-    if not len(matching):
+    # try updating from old format of longcode
+    if not len(matching_rows):
+
         # A71EV2A-x0450_A_201_v1 --> A71EV2A-x0450_A_201_1_A71EV2A-x0526+A+147+1
-        if longcode[-2] == "v":
-            longcode = longcode.replace(f"v{longcode[-1]}", longcode[-1])
-        matching = source[source[C_LONGCODE].str.startswith(longcode)]
+        
+        # change suffix _v1 -> _1
+        if template_longcode[-2] == "v":
+            template_longcode = template_longcode.replace(f"v{template_longcode[-1]}", template_longcode[-1])
 
-    match len(matching):
+        # try prefix matching
+        matching_rows = source[source[C_LONGCODE].str.startswith(template_longcode)]
+
+    match len(matching_rows):
         case 1:
-            ...
+            # single match is ok
+            source_row = matching_rows.iloc[0]
         case 0:
-            logger.warning(f'No observations in source w/ "{C_LONGCODE}"="{longcode}"')
+            # no matches prints a warning
+            mrich.warning(f'No observations in source w/ "{C_LONGCODE}"="{template_longcode}"')
             return None
-            # raise ValueError(f"No observations in source w/ \"{C_LONGCODE}\"=\"{longcode}\"")
         case _:
-            assert (
-                len(matching) == 1
-            ), f'Multiple observations in source w/ "{C_LONGCODE}"="{longcode}"'
+            # ambiguous match throws an error
+            raise ValueError(f'Multiple observations in source w/ "{C_LONGCODE}"="{template_longcode}"')
 
-    # get first match
-    for i, row in matching.iterrows():
-        reference = row
-        break
+    # check that the compound codes match
 
-    # checks
-
-    if pd.isna(reference[C_COMPOUNDCODE]):
-        logger.warning(f"Null Compound code for {reference[C_SHORTCODE]} in SOURCE file")
+    if pd.isna(source_row[C_COMPOUNDCODE]):
+        mrich.warning(f"Null Compound code for {source_row[C_SHORTCODE]} in SOURCE file")
     
-    if pd.isna(row[C_COMPOUNDCODE]):
-        logger.warning(f"Null Compound code for {reference[C_SHORTCODE]} in TEMPLATE file")
+    if pd.isna(template_row[C_COMPOUNDCODE]):
+        mrich.warning(f"Null Compound code for {source_row[C_SHORTCODE]} in TEMPLATE file")
     
-    if pd.isna(reference[C_COMPOUNDCODE]) and pd.isna(row[C_COMPOUNDCODE]): 
+    if pd.isna(source_row[C_COMPOUNDCODE]) and pd.isna(template_row[C_COMPOUNDCODE]): 
         pass
-    elif reference[C_COMPOUNDCODE] != row[C_COMPOUNDCODE]:
-        logger.var("Compound code in SOURCE", reference[C_COMPOUNDCODE])
-        logger.var("Compound code in TEMPLATE", row[C_COMPOUNDCODE])
-        raise ValueError(f"Compound codes in SOURCE do not match TEMPLATE for {reference[C_SHORTCODE]}")
+    elif source_row[C_COMPOUNDCODE] != template_row[C_COMPOUNDCODE]:
+        mrich.var("Compound code in SOURCE", source_row[C_COMPOUNDCODE])
+        mrich.var("Compound code in TEMPLATE", template_row[C_COMPOUNDCODE])
+        raise ValueError(f"Compound codes in SOURCE do not match TEMPLATE for {source_row[C_SHORTCODE]}")
 
-    assert reference[C_SMILES] == row[C_SMILES], (reference[C_SMILES], row[C_SMILES])
+    # check that the smiles match
+    if source_row[C_SMILES] != template_row[C_SMILES]:
+        mrich.var("SMILES in SOURCE", source_row[C_SMILES])
+        mrich.var("SMILES in TEMPLATE", template_row[C_SMILES])
+        raise ValueError(f"SMILES in SOURCE do not match TEMPLATE for {source_row[C_SHORTCODE]}")
 
-    return reference
+    return source_row
 
 
-def get_curator_tags(row):
+def get_curator_tags(row: pd.Series) -> list[str]:
+    """Extract non-XCA tags from a metadata row and sets the CURATOR_TAGS global variable
+
+    Identify tags in the syntax: "[TYPE] TAG", where TYPE must be in CURATOR_TAG_CATEGORIES
+
+    :param row: row to extract from
+    :returns: list of string tags
+    """
 
     tags = []
-
     for col in row.index:
         if col.startswith("[") and col.split("]")[0][1:] in CURATOR_TAG_CATEGORIES:
             tags.append((col, row[col]))
@@ -112,12 +125,19 @@ def get_curator_tags(row):
 
     return tags
 
+def compare_site_tags(source_row: pd.Series, template_row: pd.Series) -> None:
 
-def compare_site_tags(source, template):
+    """Compare all XCA-generated site tags between the two metadata rows, and all previously seen values in the SITE_TAG_CACHE.
+
+    :raises: ValueError in the event of inconsistencies
+
+    """
 
     global SITE_TAG_CACHE
 
-    assert source["Long code"] == template["Long code"], f'SOURCE Long code does not match TEMPLATE: {source["Long code"],template["Long code"]}. Try running with --no-rename-sites'
+    ## assert the longcodes are the same
+    if source_row["Long code"] != template_row["Long code"]:
+        raise ValueError(f'SOURCE_row Long code does not match template_row: {source_row["Long code"],template_row["Long code"]}. Try running with --no-rename-sites')
 
     for site_type in SITE_TAG_TYPES:
 
@@ -125,12 +145,13 @@ def compare_site_tags(source, template):
 
         col = f"{site_type} alias"
 
-        source_value = remove_tag_prefix(source[col])
-        template_value = remove_tag_prefix(template[col])
+        source_value = remove_tag_prefix(source_row[col])
+        template_value = remove_tag_prefix(template_row[col])
         cache_value = cache[template_value] if template_value in cache else None
 
+        # Cache value differs from source_value
         if cache_value and cache_value != source_value:
-            logger.var(
+            mrich.var(
                 col,
                 str(
                     dict(
@@ -140,26 +161,29 @@ def compare_site_tags(source, template):
                     )
                 ),
             )
-            logger.error(f"{col} inconsistency ({source['Long code']})")
-            raise ValueError(f"{col} inconsistency ({source['Long code']})!")
+            mrich.error(f"{col} inconsistency ({source_row['Long code']})")
+            raise ValueError(f"{col} inconsistency ({source_row['Long code']})!")
 
+        # store value in cache
         elif cache_value is None:
             if DEBUG:
-                logger.debug(
+                mrich.debug(
                     f'Caching {site_type}["{template_value}"]="{source_value}"'
                 )
-
-            # if source_value == "Glu88":
-            #     raise ValueError
 
             cache[template_value] = source_value
 
 
-def remove_tag_prefix(tag):
+def remove_tag_prefix(tag: str) -> str:
+    """Remove prefix from tag: e.g. '1 - Site 1' --> 'Site 1'"""
     return tag.split(" - ")[1]
 
 
-def detect_generated_site_alias(site_type, alias):
+def detect_generated_site_alias(site_type: str, alias: str) -> bool:
+    """Attempts to detect if a XCA-site tag name has been generated or assigned by a curator.
+    
+    :returns: True/False
+    """
 
     match site_type:
         case "ConformerSites":
@@ -195,7 +219,8 @@ def detect_generated_site_alias(site_type, alias):
     return False
 
 
-def apply_generated_site_aliases(df):
+def apply_generated_site_aliases(df: pd.DataFrame) -> None:
+    """Rename XCA site tag names based on SITE_TAG_CACHE (in-place)"""
 
     del_list = []
 
@@ -223,10 +248,10 @@ def apply_generated_site_aliases(df):
 
             df.loc[subset.index, col] = f"{prefix} - {new}"
 
-            logger.var(f"Renamed {site_type} alias", f"{old} --> {new}")
+            mrich.var(f"Renamed {site_type} alias", f"{old} --> {new}")
 
 
-def migrate_tags(source, template, site_tags: bool = True):
+def migrate_tags(source: pd.DataFrame, template: pd.DataFrame, site_tags: bool = True) -> pd.DataFrame:
 
     df = template.copy()
 
@@ -234,6 +259,7 @@ def migrate_tags(source, template, site_tags: bool = True):
 
     for i, row in df.iterrows():
 
+        # try to find matching SOURCE row
         reference = match_row_to_source(row, source)
 
         if reference is not None:
@@ -244,7 +270,10 @@ def migrate_tags(source, template, site_tags: bool = True):
 
             # curator tags:
             tags = get_curator_tags(reference)
+
         else:
+
+            # use cached value
             tags = CURATOR_TAGS
 
         for col, value in tags:
@@ -255,7 +284,7 @@ def migrate_tags(source, template, site_tags: bool = True):
     # apply curator tags
     for col, values in curator_tags.items():
         df[col] = values
-        logger.var("Migrated curator tag", col)
+        mrich.var("Migrated curator tag", col)
 
     return df
 
@@ -267,32 +296,41 @@ def migrate(
     output: str = "metadata_migrated.csv",
     rename_sites: bool = True,
     debug: bool = False,
-):
+) -> None:
+    """Migrate tags between versions of Fragalysis"""
 
+    # set debug level
     global DEBUG
     DEBUG = debug
 
+    # solve paths
     output = Path(output).resolve()
     source = Path(source).resolve()
     template = Path(template).resolve()
 
-    logger.var("source", source, dict(color="file"))
-    logger.var("template", template, dict(color="file"))
-    logger.var("output", output, dict(color="file"))
+    # console output
+    mrich.var("source", source)
+    mrich.var("template", template)
+    mrich.var("output", output)
 
+    # load inputs into dataframes
     df1 = load_csv(source)
     df2 = load_csv(template)
 
+    # perform the migration
     df3 = migrate_tags(df1, df2, site_tags=rename_sites)
 
+    # apply site aliases
     if rename_sites:
         apply_generated_site_aliases(df3)
 
-    logger.writing(output)
+    # write output
+    mrich.writing(output)
     df3.to_csv(output, index=False)
 
 
-def main():
+def main() -> None:
+    """Run the Typer app"""
     app()
 
 
