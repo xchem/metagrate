@@ -80,7 +80,7 @@ def match_row_to_source(template_row: pd.Series, source: pd.DataFrame) -> pd.Ser
         case 0:
             # no matches prints a warning
             mrich.warning(
-                f'No observations in source w/ "{C_LONGCODE}"="{template_longcode}"'
+                f"No observations in source w/ {C_LONGCODE}: {template_longcode}"
             )
             return None
         case _:
@@ -270,6 +270,7 @@ def migrate_tags(
     source: pd.DataFrame,
     template: pd.DataFrame,
     site_tags: bool = True,
+    debug: bool = False,
 ) -> pd.DataFrame:
 
     df = template.copy()
@@ -291,19 +292,35 @@ def migrate_tags(
             tags = get_curator_tags(reference)
 
         else:
-
-            # use cached value
-            tags = CURATOR_TAGS
+            # leave them empty
+            if debug:
+                mrich.debug(f"No curator tags: {row[C_LONGCODE]}")
+            continue
 
         for col, value in tags:
-            if col not in curator_tags:
-                curator_tags[col] = []
-            curator_tags[col].append(value)
+            values = curator_tags.get(col, list())
+            values.append(value)
+            curator_tags[col] = values
+
+            # set the value
+            df.at[i, col] = value
+
+    from rich.table import Table
+
+    table = Table(title="Migrated Curator Tags")
+    table.add_column("Name", style="var_name")
+    table.add_column("#migrated", style="result")
+    table.add_column("#TRUE", style="success")
 
     # apply curator tags
     for col, values in curator_tags.items():
-        df[col] = values
-        mrich.var("Migrated curator tag", col)
+
+        # replace empty values
+        df[col].fillna(False, inplace=True)
+        trues = [v for v in values if v]
+        table.add_row(col, str(len(values)), str(len(trues)))
+
+    mrich.print(table)
 
     return df
 
@@ -337,7 +354,7 @@ def migrate(
     df2 = load_csv(template)
 
     # perform the migration
-    df3 = migrate_tags(df1, df2, site_tags=rename_sites)
+    df3 = migrate_tags(df1, df2, site_tags=rename_sites, debug=debug)
 
     # apply site aliases
     if rename_sites:
