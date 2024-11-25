@@ -47,7 +47,9 @@ def load_csv(path: Path) -> pd.DataFrame:
     return df
 
 
-def match_row_to_source(template_row: pd.Series, source: pd.DataFrame) -> pd.Series:
+def match_row_to_source(
+    template_row: pd.Series, source: pd.DataFrame, warn_no_match: bool = True
+) -> pd.Series:
     """
     :param template_row: `DataFrame` row in TEMPLATE to match to SOURCE
     :param template_row: SOURCE `DataFrame` to search
@@ -79,9 +81,10 @@ def match_row_to_source(template_row: pd.Series, source: pd.DataFrame) -> pd.Ser
             source_row = matching_rows.iloc[0]
         case 0:
             # no matches prints a warning
-            mrich.warning(
-                f"No observations in source w/ {C_LONGCODE}: {template_longcode}"
-            )
+            if warn_no_match:
+                mrich.warning(
+                    f"No observations in source w/ {C_LONGCODE}: {template_longcode}"
+                )
             return None
         case _:
             # ambiguous match throws an error
@@ -121,7 +124,7 @@ def match_row_to_source(template_row: pd.Series, source: pd.DataFrame) -> pd.Ser
     return source_row
 
 
-def get_curator_tags(row: pd.Series) -> list[str]:
+def get_curator_tags(row: pd.Series) -> list[tuple[str, bool]]:
     """Extract non-XCA tags from a metadata row and sets the CURATOR_TAGS global variable
 
     Identify tags in the syntax: "[TYPE] TAG", where TYPE must be in CURATOR_TAG_CATEGORIES
@@ -270,6 +273,7 @@ def migrate_tags(
     source: pd.DataFrame,
     template: pd.DataFrame,
     site_tags: bool = True,
+    diff_only: bool = False,
     debug: bool = False,
 ) -> pd.DataFrame:
 
@@ -325,6 +329,120 @@ def migrate_tags(
     return df
 
 
+def diff_tags(
+    df1, df2, site_tags: bool = False, pose: bool = False, longcode: bool = True
+):
+
+    from rich.table import Table
+
+    data = []
+
+    for i, row2 in df2.iterrows():
+
+        # try to find matching SOURCE row
+        row1 = match_row_to_source(row2, df1, warn_no_match=False)
+
+        if row1 is None:
+            continue
+
+        values = dict()
+
+        # code
+        code1 = row1[C_SHORTCODE]
+        code2 = row2[C_SHORTCODE]
+        if code1 == code2:
+            values[C_SHORTCODE] = code1
+        else:
+            values[C_SHORTCODE] = f"[bold]{code1}[/bold] vs [bold]{code2}[/bold]"
+
+        # code
+        if longcode:
+            code1 = row1[C_LONGCODE]
+            code2 = row2[C_LONGCODE]
+            if code1 == code2:
+                values[C_LONGCODE] = code1
+            else:
+                values[C_LONGCODE] = f"[bold]{code1}[/bold] vs [bold]{code2}[/bold]"
+
+        # XCA sites
+        if site_tags:
+            """
+            ConformerSites upload name                 3a - Zika_NS5A-x0264/A/1101
+            CanonSites upload name                    3 - Zika_NS5A-x0264/A/1101/1
+            CrystalformSites upload name            F1c - Zika_NS5A-x0264/A/1101/1
+            Quatassemblies upload name                                A1 - monomer
+            Crystalforms upload name                                   F1 - P43212
+            ConformerSites short tag                             3a - Z0264/A/1101
+            CanonSites short tag                                3 - Z0264/A/1101/1
+            CrystalformSites short tag                          F1c - Z0264/A/1101
+            Quatassemblies short tag                                  A1 - monomer
+            Crystalforms short tag                                     F1 - P43212
+            ConformerSites alias                                 3a - Z0264/A/1101
+            CanonSites alias                                      3 - CanonSites 3
+            CrystalformSites alias                              F1c - Z0264/A/1101
+            Quatassemblies alias                                      A1 - monomer
+            Crystalforms alias                                         F1 - P43212
+            """
+            raise NotImplementedError
+
+        # Pose
+        if pose:
+            pose1 = row1["Pose"]
+            pose2 = row2["Pose"]
+            if pose1 == pose2:
+                values["Pose"] = pose1
+            else:
+                values["Pose"] = f"[bold]{pose1}[/bold] vs [bold]{pose2}[/bold]"
+
+        # Curator tags A
+
+        tags = set(
+            [t for t, v in get_curator_tags(row1)]
+            + [t for t, v in get_curator_tags(row2)]
+        )
+
+        for tag in tags:
+
+            v1 = row1[tag] if tag in row1 else None
+            v2 = row2[tag] if tag in row2 else None
+
+            if tag.startswith("[Other] upload_"):
+                continue
+
+            tag = tag.removeprefix("[Other] ")
+
+            if not v1 and not v2:
+                continue
+
+            if v1 and v2:
+                continue
+
+            if v1:
+                values[tag] = f"[bold cyan]a"
+            else:
+                values[tag] = f"[bold yellow]b"
+
+        data.append(values)
+
+        # break
+
+    df = pd.DataFrame(data)
+
+    df.fillna("", inplace=True)
+
+    df = df.sort_values(by="Code")
+
+    table = Table(title="[bold cyan]a[/] vs [bold yellow]b[/]")
+
+    for col in df.columns:
+        table.add_column(col, justify="center")
+
+    for i, row in df.iterrows():
+        table.add_row(*row.values)
+
+    mrich.print(table)
+
+
 @app.command()
 def migrate(
     source: str,
@@ -363,6 +481,27 @@ def migrate(
     # write output
     mrich.writing(output)
     df3.to_csv(output, index=False)
+
+
+@app.command()
+def diff(
+    a: str,
+    b: str,
+) -> None:
+    """Compare tags for common observations in two metadata.csv files"""
+
+    # solve paths
+    a = Path(a).resolve()
+    b = Path(b).resolve()
+    mrich.var("a", a)
+    mrich.var("b", b)
+
+    # load inputs into dataframes
+    df1 = load_csv(a)
+    df2 = load_csv(b)
+
+    # perform the migration
+    df3 = diff_tags(df1, df2)
 
 
 def main() -> None:

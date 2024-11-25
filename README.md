@@ -18,13 +18,13 @@ source /dls/science/groups/i04-1/software/max/load_py310.sh
 2. See the (barebones) help screen:
 
 ```
-$METAGRATE --help
+$METAGRATE migrate --help
 ```
 
 3. Migrate a metadata.csv file
 
 ```
-$METAGRATE SOURCE TEMPLATE --output OUTPUT
+$METAGRATE migrate SOURCE TEMPLATE --output OUTPUT
 ```
 
 - `SOURCE` is the metadata.csv containing the tags you want to migrate, i.e. this file should be from a Fragalysis download of a target where you have renamed the CanonicalSites and added your own tags, etc.
