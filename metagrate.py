@@ -117,9 +117,7 @@ def match_row_to_source(
     if source_row[C_SMILES] != template_row[C_SMILES]:
         mrich.var("SMILES in SOURCE", source_row[C_SMILES])
         mrich.var("SMILES in TEMPLATE", template_row[C_SMILES])
-        raise ValueError(
-            f"SMILES in SOURCE do not match TEMPLATE for {source_row[C_SHORTCODE]}"
-        )
+        mrich.warning(f"SMILES in SOURCE do not match TEMPLATE for {source_row[C_SHORTCODE]} (see above)")
 
     return source_row
 
