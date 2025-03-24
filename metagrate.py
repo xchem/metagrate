@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import mrich
+from mrich import print
 import pandas as pd
 from typer import Typer
 from pathlib import Path
@@ -24,6 +25,7 @@ SITE_TAG_TYPES = [
     "Quatassemblies",
 ]
 
+LEGACY_API_ROOT = "https://fragalysis-legacy.xchem.diamond.ac.uk/api"
 
 # cache some tag info in a dictionary for self-consistency checks
 CURATOR_TAGS = None
@@ -501,6 +503,97 @@ def diff(
     # perform the migration
     df3 = diff_tags(df1, df2)
 
+@app.command()
+def legacy_scrape(
+    target_name: str,
+) -> None:
+
+    import requests
+
+    mrich.var(target_name, target_name)
+
+    url = LEGACY_API_ROOT + "/targets"
+    params=dict(title=target_name)
+    response = requests.get(url, params=params)
+
+    if response.status_code != 200:
+        mrich.error("Could not access:", url)
+        mrich.var("params", params)
+        return None
+
+    target_data = response.json()["results"][0]
+
+    target_id = target_data["id"]
+    mrich.var("target_id", target_id)
+
+    url = LEGACY_API_ROOT + "/molecules"
+    params=dict(prot_id__target_id=target_id)
+    response = requests.get(url, params=params)
+
+    if response.status_code != 200:
+        mrich.error("Could not access:", url)
+        mrich.var("params", params)
+        return None
+
+    molecule_data = response.json()["results"]
+
+    mrich.print("Found", len(molecule_data), "molecules")
+
+    molecule_lookup = { d["id"]:d for d in molecule_data }
+
+    url = LEGACY_API_ROOT + "/molecule_tag"
+    params=dict(target=target_id)
+    response = requests.get(url, params=params)
+
+    if response.status_code != 200:
+        mrich.error("Could not access:", url)
+        mrich.var("params", params)
+        return None
+
+    tag_data = response.json()
+
+    non_snapshots = [r for r in tag_data["results"] if r["additional_info"] is None]
+
+    mrich.print("Found", len(non_snapshots), "tags")
+
+    df_data = []
+
+    for tag_d in non_snapshots:
+
+        mrich.var(tag_d["tag"], len(tag_d["molecules"]))
+
+        for molecule_id in tag_d["molecules"]:
+            molecule = molecule_lookup[molecule_id]
+            molecule[f"[Other] {tag_d['tag']}"] = True
+
+    df = pd.DataFrame(molecule_lookup.values())
+
+    df = df.set_index("protein_code")
+
+    df = df.drop(columns=[
+        "id", "cmpd_id", "prot_id",
+        "mol_type",
+        "molecule_protein",
+        "lig_id",
+        "chain_id",
+        "sdf_info",
+        "x_com",
+        "y_com",
+        "z_com",
+        "mw",
+        "logp",
+        "tpsa",
+        "ha",
+        "hacc",
+        "hdon",
+        "rots",
+        "rings",
+        "velec",
+        ])
+
+
+    mrich.writing(f"{target_name}_legacy.csv")
+    df.to_csv(f"{target_name}_legacy.csv")
 
 def main() -> None:
     """Run the Typer app"""
