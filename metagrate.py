@@ -119,7 +119,9 @@ def match_row_to_source(
     if source_row[C_SMILES] != template_row[C_SMILES]:
         mrich.var("SMILES in SOURCE", source_row[C_SMILES])
         mrich.var("SMILES in TEMPLATE", template_row[C_SMILES])
-        mrich.warning(f"SMILES in SOURCE do not match TEMPLATE for {source_row[C_SHORTCODE]} (see above)")
+        mrich.warning(
+            f"SMILES in SOURCE do not match TEMPLATE for {source_row[C_SHORTCODE]} (see above)"
+        )
 
     return source_row
 
@@ -503,6 +505,7 @@ def diff(
     # perform the migration
     df3 = diff_tags(df1, df2)
 
+
 @app.command()
 def legacy_scrape(
     target_name: str,
@@ -513,7 +516,7 @@ def legacy_scrape(
     mrich.var(target_name, target_name)
 
     url = LEGACY_API_ROOT + "/targets"
-    params=dict(title=target_name)
+    params = dict(title=target_name)
     response = requests.get(url, params=params)
 
     if response.status_code != 200:
@@ -527,7 +530,7 @@ def legacy_scrape(
     mrich.var("target_id", target_id)
 
     url = LEGACY_API_ROOT + "/molecules"
-    params=dict(prot_id__target_id=target_id)
+    params = dict(prot_id__target_id=target_id)
     response = requests.get(url, params=params)
 
     if response.status_code != 200:
@@ -539,10 +542,10 @@ def legacy_scrape(
 
     mrich.print("Found", len(molecule_data), "molecules")
 
-    molecule_lookup = { d["id"]:d for d in molecule_data }
+    molecule_lookup = {d["id"]: d for d in molecule_data}
 
     url = LEGACY_API_ROOT + "/molecule_tag"
-    params=dict(target=target_id)
+    params = dict(target=target_id)
     response = requests.get(url, params=params)
 
     if response.status_code != 200:
@@ -570,30 +573,34 @@ def legacy_scrape(
 
     df = df.set_index("protein_code")
 
-    df = df.drop(columns=[
-        "id", "cmpd_id", "prot_id",
-        "mol_type",
-        "molecule_protein",
-        "lig_id",
-        "chain_id",
-        "sdf_info",
-        "x_com",
-        "y_com",
-        "z_com",
-        "mw",
-        "logp",
-        "tpsa",
-        "ha",
-        "hacc",
-        "hdon",
-        "rots",
-        "rings",
-        "velec",
-        ])
-
+    df = df.drop(
+        columns=[
+            "id",
+            "cmpd_id",
+            "prot_id",
+            "mol_type",
+            "molecule_protein",
+            "lig_id",
+            "chain_id",
+            "sdf_info",
+            "x_com",
+            "y_com",
+            "z_com",
+            "mw",
+            "logp",
+            "tpsa",
+            "ha",
+            "hacc",
+            "hdon",
+            "rots",
+            "rings",
+            "velec",
+        ]
+    )
 
     mrich.writing(f"{target_name}_legacy.csv")
     df.to_csv(f"{target_name}_legacy.csv")
+
 
 def main() -> None:
     """Run the Typer app"""
