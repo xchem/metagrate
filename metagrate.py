@@ -509,11 +509,20 @@ def diff(
 @app.command()
 def legacy_scrape(
     target_name: str,
+    template: str,
 ) -> None:
 
     import requests
+    from hippo.tools import flat_inchikey
 
-    mrich.var(target_name, target_name)
+    template = Path(template).resolve()
+
+    mrich.var("target_name", target_name)
+    mrich.var("template", template)
+
+    df2 = load_csv(template)
+
+    ### GET TARGET ID
 
     url = LEGACY_API_ROOT + "/targets"
     params = dict(title=target_name)
@@ -528,6 +537,8 @@ def legacy_scrape(
 
     target_id = target_data["id"]
     mrich.var("target_id", target_id)
+
+    ### GET MOLECULE DATA
 
     url = LEGACY_API_ROOT + "/molecules"
     params = dict(prot_id__target_id=target_id)
@@ -544,6 +555,8 @@ def legacy_scrape(
 
     molecule_lookup = {d["id"]: d for d in molecule_data}
 
+    ### GET TAG DATA
+
     url = LEGACY_API_ROOT + "/molecule_tag"
     params = dict(target=target_id)
     response = requests.get(url, params=params)
@@ -559,6 +572,8 @@ def legacy_scrape(
 
     mrich.print("Found", len(non_snapshots), "tags")
 
+    ### LEGACY DATAFRAME
+
     df_data = []
 
     for tag_d in non_snapshots:
@@ -568,10 +583,19 @@ def legacy_scrape(
         for molecule_id in tag_d["molecules"]:
             molecule = molecule_lookup[molecule_id]
             molecule[f"[Other] {tag_d['tag']}"] = True
+            molecule["key"] = flat_inchikey(molecule["smiles"])
 
     df = pd.DataFrame(molecule_lookup.values())
 
     df = df.set_index("protein_code")
+
+    duplicates = df[df["key"].duplicated()]
+
+    if len(duplicates):
+        mrich.error("Duplicates")
+        print(duplicates["key"])
+
+    df = df.set_index("key")
 
     df = df.drop(
         columns=[
@@ -598,8 +622,38 @@ def legacy_scrape(
         ]
     )
 
+    for i, row in df2.iterrows():
+
+        smiles = row["Smiles"]
+
+        if smiles == "missing":
+            continue
+
+        inchi = flat_inchikey(smiles)
+
+        if inchi not in df.index:
+            continue
+
+        match = df.loc[inchi]
+
+        for key, value in match.to_dict().items():
+            if key.startswith("[Other]"):
+
+                if pd.isna(value):
+                    continue
+
+                if isinstance(value, dict):
+                    value = list(value.values())[0]
+
+                if pd.isna(value):
+                    continue
+
+                assert value == True
+
+                df2.at[i, key] = value
+
     mrich.writing(f"{target_name}_legacy.csv")
-    df.to_csv(f"{target_name}_legacy.csv")
+    df2.to_csv(f"{target_name}_legacy.csv", index=False)
 
 
 def main() -> None:
